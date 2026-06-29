@@ -7,34 +7,35 @@ using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Collections.Generic;
-using System.Threading;
 using System.Globalization;
 
 public class CPHInline
 {
-    // ── Konfiguration ──────────────────────────────────────────────
-    private const string TwitchDLPath    = @"G:\Twitch DL Tool\twitch-dl.exe";
-    private const string TempDownloadDir = @"D:\Stream\YoutubeQueue";   // Temporärer Ordner für Downloads
-    private const string CsvPath         = @"D:\Stream\Records\youtube_uploads.csv";
-
-    // Google OAuth – aus Google Cloud Console
-    private const string ClientId        = "DEINE_CLIENT_ID";
-    private const string ClientSecret    = "DEIN_CLIENT_SECRET";
-    private const string TokenPath       = @"D:\Stream\Records\.youtube_token"; // Gespeichertes Token
-
-    private const string RedirectUri     = "http://localhost:8080/";
-    private const string Scope           = "https://www.googleapis.com/auth/youtube.upload";
+    // ── Sensitiv – hier im Script belassen ────────────────────────
+    private const string ClientId     = "DEINE_CLIENT_ID";
+    private const string ClientSecret = "DEIN_CLIENT_SECRET";
     // ──────────────────────────────────────────────────────────────
+
+    private const string RedirectUri = "http://localhost:8080/";
+    private const string Scope       = "https://www.googleapis.com/auth/youtube.upload";
 
     private static readonly HttpClient Http = new HttpClient();
 
     public bool Execute()
     {
+        // ── Konfiguration aus Streamer.Bot Global Variables ────────
+        string tempDownloadDir = CPH.GetGlobalVar<string>("TempDownloadDir", true);
+        string youtubeCsvPath  = CPH.GetGlobalVar<string>("YoutubeCsvPath",  true);
+        string twitchDLPath    = CPH.GetGlobalVar<string>("TwitchDLPath",    true);
+        string twitchChannel   = CPH.GetGlobalVar<string>("TwitchChannel",   true);
+        string tokenPath       = CPH.GetGlobalVar<string>("TokenPath",       true);
+        // ──────────────────────────────────────────────────────────
+
         CPH.LogInfo("[YTUploader] ── Upload gestartet ─────────────────────");
 
         // 1. Twitch Metadaten aus Streamer.Bot
-        CPH.TryGetArg("gameName",    out string gameName);
         CPH.TryGetArg("streamTitle", out string streamTitle);
+        CPH.TryGetArg("gameName",    out string gameName);
 
         if (string.IsNullOrWhiteSpace(streamTitle))
             streamTitle = string.IsNullOrWhiteSpace(gameName) ? "Stream" : gameName;
@@ -43,11 +44,11 @@ public class CPHInline
         CPH.LogInfo($"[YTUploader] Titel: {safeTitle}");
 
         // 2. Temp Ordner anlegen
-        if (!Directory.Exists(TempDownloadDir))
-            Directory.CreateDirectory(TempDownloadDir);
+        if (!Directory.Exists(tempDownloadDir))
+            Directory.CreateDirectory(tempDownloadDir);
 
         // 3. Neueste Twitch VOD ID holen
-        string vodId = GetLatestTwitchVodId();
+        string vodId = GetLatestTwitchVodId(twitchDLPath, twitchChannel);
         if (string.IsNullOrWhiteSpace(vodId))
         {
             CPH.LogError("[YTUploader] Konnte keine VOD ID von Twitch holen – Abbruch.");
@@ -56,23 +57,23 @@ public class CPHInline
         CPH.LogInfo($"[YTUploader] Twitch VOD ID: {vodId}");
 
         // Bereits hochgeladen? CSV prüfen
-        if (AlreadyUploaded(vodId))
+        if (AlreadyUploaded(youtubeCsvPath, vodId))
         {
             CPH.LogInfo($"[YTUploader] VOD {vodId} wurde bereits hochgeladen – überspringe.");
             return true;
         }
 
         // 4. VOD downloaden
-        string outputFile = Path.Combine(TempDownloadDir, $"{vodId}.mp4");
-        bool downloaded = DownloadVod(vodId, outputFile);
+        string outputFile = Path.Combine(tempDownloadDir, $"{vodId}.mp4");
+        bool downloaded = DownloadVod(twitchDLPath, vodId, outputFile);
         if (!downloaded)
         {
             CPH.LogError("[YTUploader] Download fehlgeschlagen – Abbruch.");
             return false;
         }
 
-        // 5. OAuth Token holen (oder erneuern)
-        string accessToken = GetAccessToken();
+        // 5. OAuth Token holen
+        string accessToken = GetAccessToken(tokenPath);
         if (string.IsNullOrWhiteSpace(accessToken))
         {
             CPH.LogError("[YTUploader] Kein gültiges OAuth Token – Abbruch.");
@@ -84,12 +85,12 @@ public class CPHInline
         if (string.IsNullOrWhiteSpace(youtubeVideoId))
         {
             CPH.LogError("[YTUploader] YouTube Upload fehlgeschlagen.");
-            WriteCsvEntry(vodId, safeTitle, "FEHLGESCHLAGEN", "");
+            WriteCsvEntry(youtubeCsvPath, vodId, safeTitle, "FEHLGESCHLAGEN", "");
             return false;
         }
 
         CPH.LogInfo($"[YTUploader] ✅ Erfolgreich hochgeladen! YouTube ID: {youtubeVideoId}");
-        WriteCsvEntry(vodId, safeTitle, "OK", youtubeVideoId);
+        WriteCsvEntry(youtubeCsvPath, vodId, safeTitle, "OK", youtubeVideoId);
 
         // 7. Temp Datei aufräumen
         try { File.Delete(outputFile); } catch { }
@@ -100,14 +101,14 @@ public class CPHInline
 
     // ── Twitch VOD ────────────────────────────────────────────────
 
-    private string GetLatestTwitchVodId()
+    private string GetLatestTwitchVodId(string twitchDLPath, string twitchChannel)
     {
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName               = TwitchDLPath,
-                Arguments              = "videos --limit 1 --json",
+                FileName               = twitchDLPath,
+                Arguments              = $"videos {twitchChannel} --limit 1 --json",
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
                 UseShellExecute        = false,
@@ -129,14 +130,14 @@ public class CPHInline
         }
     }
 
-    private bool DownloadVod(string vodId, string outputPath)
+    private bool DownloadVod(string twitchDLPath, string vodId, string outputPath)
     {
         try
         {
             CPH.LogInfo($"[YTUploader] Downloade VOD {vodId}...");
             var psi = new ProcessStartInfo
             {
-                FileName               = TwitchDLPath,
+                FileName               = twitchDLPath,
                 Arguments              = $"download {vodId} --output \"{outputPath}\" --quality source",
                 RedirectStandardOutput = true,
                 RedirectStandardError  = true,
@@ -164,37 +165,33 @@ public class CPHInline
 
     // ── OAuth ─────────────────────────────────────────────────────
 
-    private string GetAccessToken()
+    private string GetAccessToken(string tokenPath)
     {
-        // Gespeichertes Token laden
-        if (File.Exists(TokenPath))
+        if (File.Exists(tokenPath))
         {
-            var lines = File.ReadAllLines(TokenPath);
+            var lines = File.ReadAllLines(tokenPath);
             if (lines.Length >= 2)
             {
-                string savedAccessToken  = lines[0].Trim();
-                string refreshToken      = lines[1].Trim();
-                string expiryStr         = lines.Length >= 3 ? lines[2].Trim() : "";
+                string savedAccessToken = lines[0].Trim();
+                string refreshToken     = lines[1].Trim();
+                string expiryStr        = lines.Length >= 3 ? lines[2].Trim() : "";
 
-                // Prüfen ob Token noch gültig (mit 5 Min Puffer)
                 if (DateTime.TryParse(expiryStr, out DateTime expiry) && expiry > DateTime.UtcNow.AddMinutes(5))
                 {
                     CPH.LogInfo("[YTUploader] OAuth Token noch gültig.");
                     return savedAccessToken;
                 }
 
-                // Token erneuern
                 CPH.LogInfo("[YTUploader] Token abgelaufen – erneuere...");
-                return RefreshAccessToken(refreshToken);
+                return RefreshAccessToken(tokenPath, refreshToken);
             }
         }
 
-        // Erstes Mal: Browser Login
         CPH.LogInfo("[YTUploader] Kein Token gefunden – starte Browser OAuth Flow...");
-        return AuthorizeNewToken();
+        return AuthorizeNewToken(tokenPath);
     }
 
-    private string AuthorizeNewToken()
+    private string AuthorizeNewToken(string tokenPath)
     {
         try
         {
@@ -206,11 +203,9 @@ public class CPHInline
                 $"&access_type=offline" +
                 $"&prompt=consent";
 
-            // Browser öffnen
             Process.Start(new ProcessStartInfo(authUrl) { UseShellExecute = true });
             CPH.LogInfo("[YTUploader] Browser geöffnet – warte auf Google Login...");
 
-            // Lokalen HTTP Listener starten um den Code aufzufangen
             using (var listener = new HttpListener())
             {
                 listener.Prefixes.Add(RedirectUri);
@@ -219,7 +214,6 @@ public class CPHInline
                 var context = listener.GetContext();
                 string code = context.Request.QueryString["code"];
 
-                // Antwort an Browser schicken
                 string responseHtml = "<html><body><h2>✅ Login erfolgreich! Du kannst dieses Fenster schließen.</h2></body></html>";
                 byte[] buffer = Encoding.UTF8.GetBytes(responseHtml);
                 context.Response.ContentLength64 = buffer.Length;
@@ -233,7 +227,7 @@ public class CPHInline
                     return null;
                 }
 
-                return ExchangeCodeForToken(code);
+                return ExchangeCodeForToken(tokenPath, code);
             }
         }
         catch (Exception ex)
@@ -243,7 +237,7 @@ public class CPHInline
         }
     }
 
-    private string ExchangeCodeForToken(string code)
+    private string ExchangeCodeForToken(string tokenPath, string code)
     {
         try
         {
@@ -257,7 +251,7 @@ public class CPHInline
                 new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded")).Result;
             string json = response.Content.ReadAsStringAsync().Result;
 
-            return ParseAndSaveToken(json);
+            return ParseAndSaveToken(tokenPath, json);
         }
         catch (Exception ex)
         {
@@ -266,7 +260,7 @@ public class CPHInline
         }
     }
 
-    private string RefreshAccessToken(string refreshToken)
+    private string RefreshAccessToken(string tokenPath, string refreshToken)
     {
         try
         {
@@ -279,7 +273,7 @@ public class CPHInline
                 new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded")).Result;
             string json = response.Content.ReadAsStringAsync().Result;
 
-            return ParseAndSaveToken(json, refreshToken);
+            return ParseAndSaveToken(tokenPath, json, refreshToken);
         }
         catch (Exception ex)
         {
@@ -288,7 +282,7 @@ public class CPHInline
         }
     }
 
-    private string ParseAndSaveToken(string json, string existingRefreshToken = null)
+    private string ParseAndSaveToken(string tokenPath, string json, string existingRefreshToken = null)
     {
         var accessMatch  = Regex.Match(json, @"""access_token""\s*:\s*""([^""]+)""");
         var refreshMatch = Regex.Match(json, @"""refresh_token""\s*:\s*""([^""]+)""");
@@ -305,7 +299,7 @@ public class CPHInline
         int expiresIn       = expiryMatch.Success ? int.Parse(expiryMatch.Groups[1].Value) : 3600;
         DateTime expiry     = DateTime.UtcNow.AddSeconds(expiresIn);
 
-        File.WriteAllLines(TokenPath, new[] { accessToken, refreshToken ?? "", expiry.ToString("O") });
+        File.WriteAllLines(tokenPath, new[] { accessToken, refreshToken ?? "", expiry.ToString("O") });
         CPH.LogInfo("[YTUploader] Token gespeichert.");
         return accessToken;
     }
@@ -320,7 +314,6 @@ public class CPHInline
 
             long fileSize = new FileInfo(filePath).Length;
 
-            // Metadata
             string metadata = $@"{{
                 ""snippet"": {{
                     ""title"": ""{EscapeJson(title)}"",
@@ -332,7 +325,6 @@ public class CPHInline
                 }}
             }}";
 
-            // Resumable Upload initiieren
             var initRequest = new HttpRequestMessage(HttpMethod.Post,
                 "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status");
             initRequest.Headers.Add("Authorization", $"Bearer {accessToken}");
@@ -354,7 +346,6 @@ public class CPHInline
                 return null;
             }
 
-            // Datei hochladen
             using (var fileStream = File.OpenRead(filePath))
             {
                 var uploadRequest = new HttpRequestMessage(HttpMethod.Put, uploadUrl);
@@ -362,7 +353,6 @@ public class CPHInline
                 uploadRequest.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("video/mp4");
                 uploadRequest.Content.Headers.ContentLength = fileSize;
 
-                // Timeout auf 6 Stunden setzen für große Dateien
                 Http.Timeout = TimeSpan.FromHours(6);
 
                 var uploadResponse = Http.SendAsync(uploadRequest).Result;
@@ -387,18 +377,18 @@ public class CPHInline
 
     // ── CSV ───────────────────────────────────────────────────────
 
-    private bool AlreadyUploaded(string vodId)
+    private bool AlreadyUploaded(string csvPath, string vodId)
     {
-        if (!File.Exists(CsvPath)) return false;
-        return File.ReadAllLines(CsvPath).Any(l => l.StartsWith(vodId + ","));
+        if (!File.Exists(csvPath)) return false;
+        return File.ReadAllLines(csvPath).Any(l => l.StartsWith(vodId + ","));
     }
 
-    private void WriteCsvEntry(string vodId, string title, string status, string youtubeId)
+    private void WriteCsvEntry(string csvPath, string vodId, string title, string status, string youtubeId)
     {
         try
         {
-            bool fileExists = File.Exists(CsvPath);
-            using (var writer = new StreamWriter(CsvPath, append: true))
+            bool fileExists = File.Exists(csvPath);
+            using (var writer = new StreamWriter(csvPath, append: true))
             {
                 if (!fileExists)
                     writer.WriteLine("VodId,Datum,Titel,Status,YouTubeId");
@@ -406,6 +396,7 @@ public class CPHInline
                 string date = DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
                 writer.WriteLine($"{vodId},{date},{title},{status},{youtubeId}");
             }
+            CPH.LogInfo($"[YTUploader] CSV Eintrag geschrieben: {vodId} [{status}]");
         }
         catch (Exception ex)
         {
