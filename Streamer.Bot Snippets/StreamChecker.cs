@@ -5,23 +5,23 @@ using System.Collections.Generic;
 
 public class CPHInline
 {
-    // ── Konfiguration ──────────────────────────────────────────────
-    private const string RecordsRootDir = @"D:\Stream\Records";
-    private const string CsvPath        = @"D:\Stream\Records\streams.csv";
-    // ──────────────────────────────────────────────────────────────
-
     public bool Execute()
     {
+        // ── Konfiguration aus Streamer.Bot Global Variables ────────
+        string recordsRootDir = CPH.GetGlobalVar<string>("RecordsRootDir", true);
+        string csvPath        = CPH.GetGlobalVar<string>("CsvPath",        true);
+        // ──────────────────────────────────────────────────────────
+
         CPH.LogInfo("[StreamChecker] ── Check gestartet ──────────────────────");
 
-        if (!File.Exists(CsvPath))
+        if (!File.Exists(csvPath))
         {
             CPH.LogWarn("[StreamChecker] Keine streams.csv gefunden – noch keine Streams archiviert.");
             return true;
         }
 
-        var lines = File.ReadAllLines(CsvPath)
-            .Skip(1) // Header überspringen
+        var lines = File.ReadAllLines(csvPath)
+            .Skip(1)
             .Where(l => !string.IsNullOrWhiteSpace(l))
             .ToList();
 
@@ -44,16 +44,15 @@ public class CPHInline
             var parts = line.Split(',');
             if (parts.Length < 5) continue;
 
-            string streamNr  = parts[0].Trim();
-            string date      = parts[1].Trim();
-            string gameName  = parts[2].Trim();
-            string fileName  = parts[3].Trim();
-            string status    = parts[4].Trim();
+            string streamNr = parts[0].Trim();
+            string date     = parts[1].Trim();
+            string gameName = parts[2].Trim();
+            string fileName = parts[3].Trim();
+            string status   = parts[4].Trim();
 
             total++;
 
-            // Physische Datei prüfen
-            string expectedPath = Path.Combine(RecordsRootDir, gameName, fileName);
+            string expectedPath = Path.Combine(recordsRootDir, gameName, fileName);
             bool fileExists = File.Exists(expectedPath);
 
             if (status == "KORRUPT_KEIN_BACKUP")
@@ -79,13 +78,12 @@ public class CPHInline
             }
         }
 
-        // Zusammenfassung
         CPH.LogInfo("[StreamChecker] ── Zusammenfassung ─────────────────────");
-        CPH.LogInfo($"[StreamChecker] Gesamt:       {total}");
-        CPH.LogInfo($"[StreamChecker] OK:           {ok}");
-        CPH.LogInfo($"[StreamChecker] VOD Backup:   {corrupt}");
-        CPH.LogInfo($"[StreamChecker] Fehlend:      {missing}");
-        CPH.LogInfo($"[StreamChecker] Kein Backup:  {noBackup}");
+        CPH.LogInfo($"[StreamChecker] Gesamt:      {total}");
+        CPH.LogInfo($"[StreamChecker] OK:          {ok}");
+        CPH.LogInfo($"[StreamChecker] VOD Backup:  {corrupt}");
+        CPH.LogInfo($"[StreamChecker] Fehlend:     {missing}");
+        CPH.LogInfo($"[StreamChecker] Kein Backup: {noBackup}");
 
         if (missing > 0 || noBackup > 0)
         {
