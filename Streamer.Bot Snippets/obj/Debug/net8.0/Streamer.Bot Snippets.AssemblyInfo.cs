@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Streamer.Bot Snippets")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+9bece9b4d1a2b6d5b372b8bae80878ee96c22bf6")]
 [assembly: System.Reflection.AssemblyProductAttribute("Streamer.Bot Snippets")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Streamer.Bot Snippets")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -87,13 +87,17 @@ public class CPHInline
 
         if (missing > 0 || noBackup > 0)
         {
-            CPH.LogWarn("[StreamChecker] ⚠️  Handlungsbedarf! Folgende Streams fehlen oder haben kein Backup:");
+            string summary = $"{missing} fehlend, {noBackup} ohne Backup – Log prüfen!";
+            CPH.LogWarn($"[StreamChecker] ⚠️  Handlungsbedarf! {summary}");
             foreach (var f in missingFiles)
                 CPH.LogWarn($"[StreamChecker]    → {f}");
+
+            CPH.ShowToastNotification("StreamChecker", "StreamChecker ⚠️", summary, "", "");
         }
         else
         {
             CPH.LogInfo("[StreamChecker] ✅ Alle Streams vorhanden!");
+            CPH.ShowToastNotification("StreamChecker", "StreamChecker ✅", $"Alle {total} Streams vorhanden.", "", "");
         }
 
         CPH.LogInfo("[StreamChecker] ── Check abgeschlossen ─────────────────");
