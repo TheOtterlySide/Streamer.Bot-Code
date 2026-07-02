@@ -34,8 +34,8 @@ public class CPHInline
         CPH.LogInfo("[YTUploader] ── Upload gestartet ─────────────────────");
 
         // 1. Twitch Metadaten aus Streamer.Bot
-        CPH.TryGetArg("streamTitle", out string streamTitle);
-        CPH.TryGetArg("gameName",    out string gameName);
+        CPH.TryGetArg("targetChannelTitle", out string streamTitle);
+        CPH.TryGetArg("game",    out string gameName);
 
         if (string.IsNullOrWhiteSpace(streamTitle))
             streamTitle = string.IsNullOrWhiteSpace(gameName) ? "Stream" : gameName;
@@ -52,6 +52,7 @@ public class CPHInline
         if (string.IsNullOrWhiteSpace(vodId))
         {
             CPH.LogError("[YTUploader] Konnte keine VOD ID von Twitch holen – Abbruch.");
+            CPH.ShowToastNotification("YTUploader", "YoutubeUploader ❌", "Konnte keine VOD ID von Twitch holen.", "", "");
             return false;
         }
         CPH.LogInfo($"[YTUploader] Twitch VOD ID: {vodId}");
@@ -69,6 +70,7 @@ public class CPHInline
         if (!downloaded)
         {
             CPH.LogError("[YTUploader] Download fehlgeschlagen – Abbruch.");
+            CPH.ShowToastNotification("YTUploader", "YoutubeUploader ❌", "Twitch VOD Download fehlgeschlagen.", "", "");
             return false;
         }
 
@@ -77,6 +79,7 @@ public class CPHInline
         if (string.IsNullOrWhiteSpace(accessToken))
         {
             CPH.LogError("[YTUploader] Kein gültiges OAuth Token – Abbruch.");
+            CPH.ShowToastNotification("YTUploader", "YoutubeUploader ❌", "Kein gültiges OAuth Token – bitte manuell einloggen.", "", "");
             return false;
         }
 
@@ -85,11 +88,13 @@ public class CPHInline
         if (string.IsNullOrWhiteSpace(youtubeVideoId))
         {
             CPH.LogError("[YTUploader] YouTube Upload fehlgeschlagen.");
+            CPH.ShowToastNotification("YTUploader", "YoutubeUploader ❌", $"Upload fehlgeschlagen: {safeTitle}", "", "");
             WriteCsvEntry(youtubeCsvPath, vodId, safeTitle, "FEHLGESCHLAGEN", "");
             return false;
         }
 
         CPH.LogInfo($"[YTUploader] ✅ Erfolgreich hochgeladen! YouTube ID: {youtubeVideoId}");
+        CPH.ShowToastNotification("YTUploader", "YoutubeUploader ✅", $"Hochgeladen: {safeTitle}", "", "");
         WriteCsvEntry(youtubeCsvPath, vodId, safeTitle, "OK", youtubeVideoId);
 
         // 7. Temp Datei aufräumen

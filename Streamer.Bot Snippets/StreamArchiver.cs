@@ -21,11 +21,12 @@ public class CPHInline
         // ──────────────────────────────────────────────────────────
 
         // 1. Spielname vom Stream Offline Trigger
-        CPH.TryGetArg("gameName", out string gameName);
+        CPH.TryGetArg("game", out string gameName);
 
         if (string.IsNullOrWhiteSpace(gameName))
         {
             CPH.LogWarn("[StreamArchiver] Kein Spielname gefunden – Abbruch.");
+            CPH.ShowToastNotification("StreamArchiver", "StreamArchiver", "❌ Kein Spielname gefunden – Abbruch.", "", "");
             return false;
         }
 
@@ -41,6 +42,7 @@ public class CPHInline
         if (mp4Files.Count == 0)
         {
             CPH.LogWarn($"[StreamArchiver] Keine MP4 Datei in {recordBaseDir} gefunden.");
+            CPH.ShowToastNotification("StreamArchiver", "StreamArchiver", $"❌ Keine MP4 Datei in {recordBaseDir} gefunden.", "", "");
             return false;
         }
 
@@ -74,26 +76,26 @@ public class CPHInline
 
             File.Copy(renamedSourcePath, targetPath);
             CPH.LogInfo($"[StreamArchiver] ✅ Kopie erstellt: {targetPath}");
-            CPH.SendMessage($"✅ Stream archiviert: {numberedName}", true);
+            CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ✅", $"Stream archiviert: {numberedName}", "", "");
             WriteCsvEntry(csvPath, nextNumber, safeGameName, numberedName, "OK");
         }
         else
         {
             CPH.LogWarn($"[StreamArchiver] ❌ Datei korrupt: {latestFile.FullName}");
-            CPH.SendMessage("⚠️ Aufnahme korrupt! Ziehe VOD von Twitch als Fallback...", true);
+            CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ⚠️", "Aufnahme korrupt! Ziehe VOD von Twitch als Fallback...", "", "");
 
             bool vodDownloaded = DownloadLatestTwitchVOD(twitchDLPath, twitchChannel, targetPath);
 
             if (vodDownloaded)
             {
                 CPH.LogInfo($"[StreamArchiver] ✅ Twitch VOD gesichert: {targetPath}");
-                CPH.SendMessage($"✅ Twitch VOD gesichert: {numberedName}", true);
+                CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ✅", $"Twitch VOD gesichert: {numberedName}", "", "");
                 WriteCsvEntry(csvPath, nextNumber, safeGameName, numberedName, "KORRUPT_VOD_GEZOGEN");
             }
             else
             {
                 CPH.LogError("[StreamArchiver] ❌ Twitch VOD Download fehlgeschlagen!");
-                CPH.SendMessage("❌ VOD Download fehlgeschlagen – bitte manuell prüfen!", true);
+                CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ❌", "VOD Download fehlgeschlagen – bitte manuell prüfen!", "", "");
                 WriteCsvEntry(csvPath, nextNumber, safeGameName, numberedName, "KORRUPT_KEIN_BACKUP");
             }
         }
@@ -175,7 +177,6 @@ public class CPHInline
     {
         try
         {
-            // VOD ID holen
             var listPsi = new ProcessStartInfo
             {
                 FileName               = twitchDLPath,
@@ -205,7 +206,6 @@ public class CPHInline
 
             CPH.LogInfo($"[StreamArchiver] Twitch VOD ID: {vodId}");
 
-            // VOD downloaden
             var dlPsi = new ProcessStartInfo
             {
                 FileName               = twitchDLPath,
