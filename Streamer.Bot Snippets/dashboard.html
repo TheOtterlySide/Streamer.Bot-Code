@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StreamArchiver</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0E0E10;
+    --surface: #18181B;
+    --surface2: #1F1F23;
+    --border: #2A2A2E;
+    --purple: #9147FF;
+    --purple-dim: #6441A4;
+    --green: #1DB954;
+    --red: #E91916;
+    --yellow: #F59E0B;
+    --text: #EFEFF1;
+    --text-dim: #ADADB8;
+    --text-muted: #53535F;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Inter', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  /* Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--purple);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .logo-icon svg { width: 20px; height: 20px; fill: white; }
+
+  .header h1 {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  .header-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+
+  .live-badge {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border-radius: 4px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+
+  .live-badge.active {
+    border-color: var(--purple);
+    color: var(--purple);
+  }
+
+  .live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+
+  .live-badge.active .live-dot {
+    background: var(--purple);
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.7); }
+  }
+
+  /* Grid */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+
+  .card-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    font-family: var(--mono);
+  }
+
+  /* Current Step */
+  .step-card {
+    grid-column: span 2;
+    border-color: var(--purple-dim);
+  }
+
+  .step-inner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .step-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+
+  .step-icon.running { border-color: var(--purple); background: rgba(145, 71, 255, 0.1); }
+  .step-icon.success { border-color: var(--green); background: rgba(29, 185, 84, 0.1); }
+  .step-icon.error   { border-color: var(--red); background: rgba(233, 25, 22, 0.1); }
+  .step-icon.idle    { border-color: var(--border); }
+
+  .step-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .step-detail {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* Progress bar */
+  .progress-wrap {
+    margin-top: 14px;
+  }
+
+  .progress-meta {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  .progress-bar {
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--purple);
+    border-radius: 2px;
+    transition: width 1s ease;
+  }
+
+  .progress-fill.green { background: var(--green); }
+
+  /* Stat cards */
+  .stat-value {
+    font-family: var(--mono);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* Status pill */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--mono);
+  }
+
+  .pill.ok     { background: rgba(29,185,84,0.15); color: var(--green); }
+  .pill.error  { background: rgba(233,25,22,0.15); color: var(--red); }
+  .pill.warn   { background: rgba(245,158,11,0.15); color: var(--yellow); }
+  .pill.idle   { background: var(--surface2); color: var(--text-muted); }
+
+  /* Log */
+  .log-card { grid-column: span 2; }
+
+  .log-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  .log-list::-webkit-scrollbar { width: 4px; }
+  .log-list::-webkit-scrollbar-track { background: transparent; }
+  .log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .log-entry {
+    display: grid;
+    grid-template-columns: 60px 50px 1fr;
+    gap: 12px;
+    padding: 6px 10px;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 11px;
+    align-items: center;
+  }
+
+  .log-entry:hover { background: var(--surface2); }
+
+  .log-time { color: var(--text-muted); }
+  .log-nr   { color: var(--purple); font-weight: 700; }
+  .log-name { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Checker summary */
+  .checker-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .checker-row:last-child { border-bottom: none; }
+
+  .checker-label {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .checker-val {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  /* Update ticker */
+  .ticker {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 20px;
+  }
+
+  .ticker span { color: var(--purple); }
+
+  /* Spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { display: inline-block; animation: spin 1s linear infinite; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M4 2v16l4-4h12V2H4zm14 10H6V4h12v8zM8 12l-2 2V4"/>
+        <rect x="8" y="7" width="2" height="5"/>
+        <rect x="13" y="5" width="2" height="7"/>
+      </svg>
+    </div>
+    <div>
+      <h1>StreamArchiver</h1>
+      <div class="header-sub">Streamer.Bot Dashboard</div>
+    </div>
+  </div>
+  <div class="live-badge" id="liveBadge">
+    <div class="live-dot"></div>
+    <span id="liveText">IDLE</span>
+  </div>
+</div>
+
+<!-- Current Step -->
+<div class="grid">
+  <div class="card step-card">
+    <div class="card-label">Aktueller Schritt</div>
+    <div class="step-inner">
+      <div class="step-icon" id="stepIcon">💤</div>
+      <div>
+        <div class="step-name" id="stepName">Warte auf Stream Ende</div>
+        <div class="step-detail" id="stepDetail">–</div>
+      </div>
+    </div>
+    <div class="progress-wrap" id="progressWrap" style="display:none">
+      <div class="progress-meta">
+        <span id="progressLabel">Download</span>
+        <span id="progressVal">0 MB</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="grid-3">
+  <div class="card">
+    <div class="card-label">Letzter Stream</div>
+    <div class="stat-value" id="lastStream">–</div>
+    <div class="stat-sub" id="lastStreamDate">noch kein Eintrag</div>
+  </div>
+  <div class="card">
+    <div class="card-label">Archiviert</div>
+    <div class="stat-value" id="totalStreams">0</div>
+    <div class="stat-sub">Streams gesamt</div>
+  </div>
+  <div class="card">
+    <div class="card-label">YouTube Status</div>
+    <div style="margin-top:4px" id="ytStatus"><span class="pill idle">–</span></div>
+    <div class="stat-sub" style="margin-top:8px" id="ytDetail">kein Upload aktiv</div>
+  </div>
+</div>
+
+<!-- Checker + Log -->
+<div class="grid">
+  <div class="card">
+    <div class="card-label">StreamChecker</div>
+    <div id="checkerRows">
+      <div class="checker-row"><span class="checker-label">Gesamt</span><span class="checker-val" id="cTotal">–</span></div>
+      <div class="checker-row"><span class="checker-label">OK</span><span class="checker-val" id="cOk" style="color:var(--green)">–</span></div>
+      <div class="checker-row"><span class="checker-label">Fehlend</span><span class="checker-val" id="cMissing" style="color:var(--red)">–</span></div>
+      <div class="checker-row"><span class="checker-label">Kein Backup</span><span class="checker-val" id="cNoBackup" style="color:var(--yellow)">–</span></div>
+      <div class="checker-row"><span class="checker-label">Letzter Check</span><span class="checker-val" id="cTime" style="color:var(--text-muted);font-size:11px">–</span></div>
+    </div>
+  </div>
+
+  <div class="card log-card">
+    <div class="card-label">Letzte Streams</div>
+    <div class="log-list" id="logList">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--text-muted);padding:8px 10px">Keine Einträge</div>
+    </div>
+  </div>
+</div>
+
+<div class="ticker">Aktualisiert alle 2s · Letzte Aktualisierung: <span id="lastUpdate">–</span></div>
+
+<script>
+const STATUS_FILE = 'D:/Stream/Records/status.json';
+
+async function fetchStatus() {
+  try {
+    // Fetch via file:// würde CORS blockieren – daher laden wir relativ
+    // Die HTML Datei und status.json liegen im selben Ordner
+    const r = await fetch('status.json?t=' + Date.now());
+    if (!r.ok) return null;
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+function timeAgo(iso) {
+  if (!iso) return '–';
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60) return `vor ${diff}s`;
+  if (diff < 3600) return `vor ${Math.floor(diff/60)}min`;
+  return `vor ${Math.floor(diff/3600)}h`;
+}
+
+function pill(status) {
+  const map = {
+    'OK': '<span class="pill ok">✓ OK</span>',
+    'KORRUPT_VOD_GEZOGEN': '<span class="pill warn">⚠ VOD Backup</span>',
+    'KORRUPT_KEIN_BACKUP': '<span class="pill error">✗ Kein Backup</span>',
+    'FEHLGESCHLAGEN': '<span class="pill error">✗ Fehlgeschlagen</span>',
+    'UPLOADING': '<span class="pill" style="background:rgba(145,71,255,.15);color:#9147FF">⏫ Upload läuft</span>',
+    'DOWNLOADING': '<span class="pill" style="background:rgba(145,71,255,.15);color:#9147FF">⬇ Download läuft</span>',
+  };
+  return map[status] || `<span class="pill idle">${status || '–'}</span>`;
+}
+
+function render(d) {
+  if (!d) return;
+
+  // Live badge
+  const isActive = d.step && d.step !== 'idle';
+  const badge = document.getElementById('liveBadge');
+  badge.className = 'live-badge' + (isActive ? ' active' : '');
+  document.getElementById('liveText').textContent = isActive ? 'AKTIV' : 'IDLE';
+
+  // Step
+  const stepIcons = {
+    idle: '💤', ffmpeg: '🔍', copy: '📋', download: '⬇️',
+    upload: '⬆️', checker: '✅', error: '❌', done: '✅'
+  };
+  const stepNames = {
+    idle: 'Warte auf Stream Ende',
+    ffmpeg: 'FFmpeg Dateiprüfung',
+    copy: 'Umbenennen & Kopieren',
+    download: 'Twitch VOD Download',
+    upload: 'YouTube Upload',
+    checker: 'StreamChecker läuft',
+    error: 'Fehler aufgetreten',
+    done: 'Fertig'
+  };
+  const stepClasses = {
+    idle: 'idle', ffmpeg: 'running', copy: 'running',
+    download: 'running', upload: 'running', checker: 'running',
+    error: 'error', done: 'success'
+  };
+
+  const step = d.step || 'idle';
+  document.getElementById('stepIcon').textContent = stepIcons[step] || '⚙️';
+  document.getElementById('stepIcon').className = 'step-icon ' + (stepClasses[step] || 'idle');
+  document.getElementById('stepName').textContent = stepNames[step] || step;
+  document.getElementById('stepDetail').textContent = d.stepDetail || '–';
+
+  // Progress
+  const pw = document.getElementById('progressWrap');
+  if (step === 'download' && d.downloadMB !== undefined) {
+    pw.style.display = 'block';
+    document.getElementById('progressLabel').textContent = 'Download Fortschritt';
+    document.getElementById('progressVal').textContent = `${d.downloadMB} MB`;
+    const pct = d.downloadPct || 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressFill').className = 'progress-fill';
+  } else if (step === 'upload' && d.uploadPct !== undefined) {
+    pw.style.display = 'block';
+    document.getElementById('progressLabel').textContent = 'Upload zu YouTube';
+    document.getElementById('progressVal').textContent = `${d.uploadPct}%`;
+    document.getElementById('progressFill').style.width = d.uploadPct + '%';
+    document.getElementById('progressFill').className = 'progress-fill green';
+  } else {
+    pw.style.display = 'none';
+  }
+
+  // Stats
+  if (d.lastStream) {
+    document.getElementById('lastStream').textContent = d.lastStream.name || '–';
+    document.getElementById('lastStreamDate').textContent = timeAgo(d.lastStream.date) + ' · ' + (d.lastStream.game || '');
+  }
+  document.getElementById('totalStreams').textContent = d.totalStreams || '0';
+
+  // YouTube
+  document.getElementById('ytStatus').innerHTML = pill(d.ytStatus);
+  document.getElementById('ytDetail').textContent = d.ytDetail || '–';
+
+  // Checker
+  if (d.checker) {
+    document.getElementById('cTotal').textContent = d.checker.total ?? '–';
+    document.getElementById('cOk').textContent = d.checker.ok ?? '–';
+    document.getElementById('cMissing').textContent = d.checker.missing ?? '–';
+    document.getElementById('cNoBackup').textContent = d.checker.noBackup ?? '–';
+    document.getElementById('cTime').textContent = timeAgo(d.checker.lastCheck);
+  }
+
+  // Log list
+  if (d.recentStreams && d.recentStreams.length > 0) {
+    document.getElementById('logList').innerHTML = d.recentStreams.map(s => `
+      <div class="log-entry">
+        <span class="log-time">${s.date || '–'}</span>
+        <span class="log-nr">#${s.nr}</span>
+        <span class="log-name" title="${s.file}">${s.file}</span>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('de-DE');
+}
+
+async function tick() {
+  const data = await fetchStatus();
+  render(data);
+}
+
+tick();
+setInterval(tick, 2000);
+</script>
+</body>
+</html>
