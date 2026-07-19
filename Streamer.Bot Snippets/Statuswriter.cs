@@ -1,185 +1,4 @@
-using System;
-using System.IO;
-using System.Linq;
-using System.Diagnostics;
-using System.Collections.Generic;
-
-public class CPHInline
-{
-    public bool Execute()
-    {
-        // ── Konfiguration aus Streamer.Bot Global Variables ────────
-        string recordsRootDir = CPH.GetGlobalVar<string>("RecordsRootDir", true);
-        string csvPath        = CPH.GetGlobalVar<string>("CsvPath",        true);
-        // ──────────────────────────────────────────────────────────
-
-        CPH.LogInfo("[StreamChecker] ── Check gestartet ──────────────────────");
-        AppendLog("StreamChecker", "🔎 Check gestartet...");
-        WriteStatus("checker", "Überprüfe Archiv...");
-        OpenDashboardOnce();
-
-        if (!File.Exists(csvPath))
-        {
-            CPH.LogWarn("[StreamChecker] Keine streams.csv gefunden – noch keine Streams archiviert.");
-            return true;
-        }
-
-        var lines = File.ReadAllLines(csvPath)
-            .Skip(1)
-            .Where(l => !string.IsNullOrWhiteSpace(l))
-            .Reverse()
-            .Take(15)
-            .Reverse()
-            .ToList();
-
-        if (lines.Count == 0)
-        {
-            CPH.LogWarn("[StreamChecker] CSV ist leer – noch keine Einträge.");
-            return true;
-        }
-
-        int total    = 0;
-        int ok       = 0;
-        int missing  = 0;
-        int corrupt  = 0;
-        int noBackup = 0;
-
-        var missingFiles = new List<string>();
-
-        foreach (var line in lines)
-        {
-            var parts = line.Split(',');
-            if (parts.Length < 5) continue;
-
-            string streamNr = parts[0].Trim();
-            string date     = parts[1].Trim();
-            string gameName = parts[2].Trim();
-            string fileName = parts[3].Trim();
-            string status   = parts[4].Trim();
-
-            total++;
-
-            string expectedPath = Path.Combine(recordsRootDir, gameName, fileName);
-            bool fileExists = File.Exists(expectedPath);
-
-            if (status == "KORRUPT_KEIN_BACKUP")
-            {
-                noBackup++;
-                CPH.LogWarn($"[StreamChecker] ⚠️  #{streamNr} [{date}] {fileName} – KORRUPT, kein Backup vorhanden!");
-            }
-            else if (!fileExists)
-            {
-                missing++;
-                missingFiles.Add($"#{streamNr} [{date}] {fileName}");
-                CPH.LogWarn($"[StreamChecker] ❌ #{streamNr} [{date}] {fileName} – DATEI FEHLT! (Erwartet: {expectedPath})");
-            }
-            else if (status == "KORRUPT_VOD_GEZOGEN")
-            {
-                corrupt++;
-                CPH.LogInfo($"[StreamChecker] ⚠️  #{streamNr} [{date}] {fileName} – VOD Backup (war korrupt, Datei OK)");
-            }
-            else
-            {
-                ok++;
-                CPH.LogInfo($"[StreamChecker] ✅ #{streamNr} [{date}] {fileName} – OK");
-            }
-        }
-
-        CPH.LogInfo("[StreamChecker] ── Zusammenfassung ─────────────────────");
-        CPH.LogInfo($"[StreamChecker] Gesamt:      {total}");
-        CPH.LogInfo($"[StreamChecker] OK:          {ok}");
-        CPH.LogInfo($"[StreamChecker] VOD Backup:  {corrupt}");
-        CPH.LogInfo($"[StreamChecker] Fehlend:     {missing}");
-        CPH.LogInfo($"[StreamChecker] Kein Backup: {noBackup}");
-
-        // Checker Ergebnis in Global Variables für Dashboard speichern
-        CPH.SetGlobalVar("checker_total",     total.ToString(),   false);
-        CPH.SetGlobalVar("checker_ok",        ok.ToString(),      false);
-        CPH.SetGlobalVar("checker_missing",   missing.ToString(), false);
-        CPH.SetGlobalVar("checker_nobackup",  noBackup.ToString(),false);
-        CPH.SetGlobalVar("checker_lastcheck", DateTime.UtcNow.ToString("O"), false);
-
-        if (missing > 0 || noBackup > 0)
-        {
-            string summary = $"{missing} fehlend, {noBackup} ohne Backup – Log prüfen!";
-            CPH.LogWarn($"[StreamChecker] ⚠️  Handlungsbedarf! {summary}");
-            foreach (var f in missingFiles)
-                CPH.LogWarn($"[StreamChecker]    → {f}");
-
-            CPH.ShowToastNotification("StreamChecker", "StreamChecker ⚠️", summary, "", "");
-            AppendLog("StreamChecker", $"⚠️ {summary}");
-            foreach (var f in missingFiles)
-                AppendLog("StreamChecker", $"❌ Fehlt: {f}");
-            WriteStatus("idle", summary);
-        }
-        else
-        {
-            CPH.LogInfo("[StreamChecker] ✅ Alle Streams vorhanden!");
-            CPH.ShowToastNotification("StreamChecker", "StreamChecker ✅", $"Alle {total} Streams vorhanden.", "", "");
-            AppendLog("StreamChecker", $"✅ Alle {total} Streams vorhanden.");
-            WriteStatus("idle", $"Alle {total} Streams OK");
-        }
-
-        CPH.LogInfo("[StreamChecker] ── Check abgeschlossen ─────────────────");
-        return true;
-    }
-
-    // ── Hilfsmethoden ─────────────────────────────────────────────
-
-    // Gemeinsames Live-Log fürs Dashboard (alle Scripts)
-    private const string DashboardLogVar      = "dashboard_log";
-    private const int    DashboardLogMaxLines = 80;
-
-    private void AppendLog(string scriptTag, string message)
-    {
-        try
-        {
-            string existing = CPH.GetGlobalVar<string>(DashboardLogVar, false) ?? "";
-            var lines = existing.Split(new[] { "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
-            string logDate = DateTime.Now.ToString("yyyy-MM-dd");
-            string logTime = DateTime.Now.ToString("HH:mm:ss");
-            lines.Add($"{logDate}|{logTime}|{scriptTag}|{message}");
-            if (lines.Count > DashboardLogMaxLines)
-                lines = lines.Skip(lines.Count - DashboardLogMaxLines).ToList();
-            CPH.SetGlobalVar(DashboardLogVar, string.Join("\n", lines), false);
-        }
-        catch (Exception ex)
-        {
-            CPH.LogWarn($"[DashboardLog] {ex.Message}");
-        }
-    }
-
-    // Öffnet das Dashboard einmal pro Kalendertag im Standardbrowser – der Pfad wird
-    // exakt so aus CsvPath abgeleitet wie in WriteStatus, also NICHT hart codiert.
-    private void OpenDashboardOnce()
-    {
-        try
-        {
-            string today = DateTime.Now.ToString("yyyy-MM-dd");
-            string lastOpened = CPH.GetGlobalVar<string>("dashboard_last_opened", true);
-            if (lastOpened == today) return;
-
-            string mainCsvPath  = CPH.GetGlobalVar<string>("CsvPath", true) ?? @"D:\Stream\Records\streams.csv";
-            string dashboardPath = mainCsvPath.Replace("streams.csv", "dashboard.html");
-
-            if (File.Exists(dashboardPath))
-            {
-                Process.Start(new ProcessStartInfo(dashboardPath) { UseShellExecute = true });
-                CPH.SetGlobalVar("dashboard_last_opened", today, true);
-                CPH.LogInfo($"[StreamChecker] Dashboard im Browser geöffnet: {dashboardPath}");
-            }
-            else
-            {
-                CPH.LogInfo($"[StreamChecker] Dashboard-Datei noch nicht vorhanden ({dashboardPath}) – wird gleich von WriteStatus angelegt.");
-            }
-        }
-        catch (Exception ex)
-        {
-            CPH.LogWarn($"[StreamChecker] Konnte Dashboard nicht öffnen: {ex.Message}");
-        }
-    }
-
-    private void WriteStatus(string step, string detail = "",
+private void WriteStatus(string step, string detail = "",
     int downloadMB = -1, int downloadPct = -1, int uploadPct = -1,
     string ytStatus = "", string ytDetail = "")
 {
@@ -559,4 +378,72 @@ iframe{{border:0;width:100%;display:block;background:transparent}}
         CPH.LogWarn($"[StatusWriter] {ex.Message}");
     }
 }
+
+// ── Gemeinsames Live-Log fürs Dashboard (in jedes Script einfügen) ──
+private const string DashboardLogVar      = "dashboard_log";
+private const int    DashboardLogMaxLines = 80;
+
+private void AppendLog(string scriptTag, string message)
+{
+    try
+    {
+        string existing = CPH.GetGlobalVar<string>(DashboardLogVar, false) ?? "";
+        var lines = existing.Split(new[] { "\n" }, StringSplitOptions.RemoveEmptyEntries).ToList();
+        string logDate = DateTime.Now.ToString("yyyy-MM-dd");
+        string logTime = DateTime.Now.ToString("HH:mm:ss");
+        lines.Add($"{logDate}|{logTime}|{scriptTag}|{message}");
+        if (lines.Count > DashboardLogMaxLines)
+            lines = lines.Skip(lines.Count - DashboardLogMaxLines).ToList();
+        CPH.SetGlobalVar(DashboardLogVar, string.Join("\n", lines), false);
+    }
+    catch (Exception ex)
+    {
+        CPH.LogWarn($"[DashboardLog] {ex.Message}");
+    }
+}
+
+// ── Ausführungs-Sperre – verhindert doppelte/parallele Läufe ────────
+// (nur in StreamArchiver.cs und YoutubeUploader.cs verwendet)
+private bool TryAcquireLock(string lockName, TimeSpan staleAfter, out string lockPath)
+{
+    string root = CPH.GetGlobalVar<string>("RecordsRootDir", true) ?? @"D:\Stream\Records";
+    string locksDir = Path.Combine(root, ".locks");
+    try { Directory.CreateDirectory(locksDir); } catch { }
+    lockPath = Path.Combine(locksDir, lockName + ".lock");
+
+    for (int attempt = 0; attempt < 2; attempt++)
+    {
+        try
+        {
+            using (var fs = new FileStream(lockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var sw = new StreamWriter(fs))
+                sw.WriteLine(DateTime.UtcNow.ToString("O"));
+            return true;
+        }
+        catch (IOException)
+        {
+            if (attempt == 0)
+            {
+                try
+                {
+                    var info = new FileInfo(lockPath);
+                    if (info.Exists && DateTime.UtcNow - info.LastWriteTimeUtc > staleAfter)
+                    {
+                        CPH.LogWarn($"[Lock] Verwaiste Sperre '{lockName}' ist älter als {staleAfter.TotalMinutes:F0}min – wird entfernt.");
+                        File.Delete(lockPath);
+                        continue;
+                    }
+                }
+                catch { }
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+private void ReleaseLock(string lockPath)
+{
+    try { if (!string.IsNullOrEmpty(lockPath) && File.Exists(lockPath)) File.Delete(lockPath); }
+    catch (Exception ex) { CPH.LogWarn($"[Lock] Konnte Sperre nicht entfernen: {ex.Message}"); }
 }
