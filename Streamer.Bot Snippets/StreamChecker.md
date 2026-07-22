@@ -1,4 +1,8 @@
-# StreamChecker – Streamer.Bot Setup
+# StreamChecker – Streamer.Bot Setup (optional)
+
+> **Hinweis:** Seit dem letzten Update prüft `StreamArchiver.cs` direkt im Anschluss ans Archivieren selbst, ob alle Streams physisch vorhanden sind – ganz ohne diese Datei. Wenn du wie die meisten nur den **Stream-Offline**-Trigger nutzt, brauchst du `StreamChecker.cs` **nicht** und kannst die Action in Streamer.bot komplett löschen bzw. gar nicht erst anlegen.
+>
+> Diese Datei lohnt sich nur, wenn du den Check **zusätzlich** an andere Trigger hängen willst – z.B. direkt nach einem Neustart von Streamer.bot, oder manuell per Chat-Command, ohne auf den nächsten Stream zu warten.
 
 Prüft ob alle archivierten Streams physisch vorhanden sind und öffnet das Dashboard automatisch.
 
@@ -17,10 +21,11 @@ Prüft ob alle archivierten Streams physisch vorhanden sind und öffnet das Dash
 
 ## Trigger
 
+Da `StreamArchiver.cs` den Check jetzt selbst nach dem Archivieren macht, ist **Stream Offline** hier kein empfohlener Trigger mehr (würde nur doppelt prüfen). Sinnvoll bleibt:
+
 | Trigger | Wann |
 |---------|------|
-| **Stream Offline** (Twitch) | Nach jedem Stream Ende, nach StreamArchiver in der Queue |
-| **Streamer.Bot Started** | Beim Start des Bots |
+| **Streamer.Bot Started** | Beim Start des Bots – sofort sehen, ob alles passt, ohne auf den nächsten Stream zu warten |
 | **Chat Command** `!checkstreams` | Manuell bei Bedarf |
 
 ---
@@ -51,9 +56,7 @@ Werden vom StreamChecker selbst gesetzt (für Dashboard):
 
 1. Neue Action anlegen: `StreamChecker`
 2. Sub-Action: **Execute C# Code** → Inhalt von `StreamChecker.cs` reinkopieren → **Compile**
-3. Trigger 1: **Stream Offline** (Twitch) → nach StreamArchiver in der Queue
-4. Trigger 2: **Streamer.Bot Started**
-5. Trigger 3: Chat Command `!checkstreams` (optional)
+3. Trigger: **Streamer.Bot Started** und/oder Chat Command `!checkstreams` – je nachdem, was du brauchst
 
 ---
 
@@ -87,7 +90,7 @@ Fehlende Dateien werden sowohl in der Zusammenfassung als auch einzeln (`❌ Feh
 
 `dashboard.html` liegt im selben Ordner wie `CsvPath` – kein fixer Pfad. Aufgebaut aus mehreren Dateien (Shell + drei unabhängig aktualisierende Iframes), damit möglichst wenig flackert. Details siehe Haupt-README.
 
-StreamChecker öffnet das Dashboard automatisch, aber **nur einmal pro Kalendertag** – der Zeitpunkt wird sich mit YoutubeUploader geteilt (`dashboard_last_opened`), damit nicht beide Scripts unabhängig voneinander Tabs aufmachen.
+StreamChecker öffnet das Dashboard automatisch, aber **nur einmal pro Kalendertag** – der Zeitpunkt wird sich mit StreamArchiver und YoutubeUploader geteilt (`dashboard_last_opened`), damit nicht mehrere Scripts unabhängig voneinander Tabs aufmachen.
 
 ---
 

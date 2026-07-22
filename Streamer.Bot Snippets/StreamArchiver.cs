@@ -31,6 +31,8 @@ public class CPHInline
         try
         {
 
+        OpenDashboardOnce();
+
         // 1. Spielname vom Stream Offline Trigger
         CPH.TryGetArg("game", out string gameName);
 
@@ -177,6 +179,13 @@ public class CPHInline
             }
         }
 
+        // Direkt im Anschluss prüfen statt über die Queue auf ein separates
+        // StreamChecker-Sub-Action zu warten – dieselbe Ausführung, kein Race,
+        // keine Sperr-Datei-Krücke nötig (siehe StreamChecker.cs für den
+        // eigenständigen Check über die anderen Trigger: Streamer.Bot Started
+        // und !checkstreams).
+        RunEmbeddedCheck(recordsRootDir, csvPath);
+
         return true;
         }
         finally
@@ -203,10 +212,55 @@ public class CPHInline
             if (lines.Count > DashboardLogMaxLines)
                 lines = lines.Skip(lines.Count - DashboardLogMaxLines).ToList();
             CPH.SetGlobalVar(DashboardLogVar, string.Join("\n", lines), false);
+
+            // Zusätzlich dauerhaft auf Platte sichern (eine Datei pro Tag) – im Gegensatz
+            // zum In-Memory-Dashboard-Log (nur die letzten Zeilen, weg nach Neustart)
+            // bleibt das hier vollständig erhalten.
+            try
+            {
+                string logRoot = CPH.GetGlobalVar<string>("RecordsRootDir", true) ?? @"D:\Stream\Records";
+                string logDir  = Path.Combine(logRoot, "logs");
+                Directory.CreateDirectory(logDir);
+                string logFile = Path.Combine(logDir, $"activity_{logDate}.log");
+                File.AppendAllText(logFile, $"{logDate} {logTime} [{scriptTag}] {message}{Environment.NewLine}");
+            }
+            catch { /* Datei-Logging ist best-effort, darf den Ablauf nie stören */ }
         }
         catch (Exception ex)
         {
             CPH.LogWarn($"[DashboardLog] {ex.Message}");
+        }
+    }
+
+    // Öffnet das Dashboard einmal pro Kalendertag im Standardbrowser – der Pfad wird
+    // exakt so aus CsvPath abgeleitet wie in WriteStatus, also NICHT hart codiert.
+    // Teilt sich den "dashboard_last_opened"-Merker mit YoutubeUploader/StreamChecker,
+    // damit nicht mehrere Scripts unabhängig voneinander Tabs aufmachen.
+    private void OpenDashboardOnce()
+    {
+        try
+        {
+            string today = DateTime.Now.ToString("yyyy-MM-dd");
+            string lastOpened = CPH.GetGlobalVar<string>("dashboard_last_opened", true);
+            if (lastOpened == today) return;
+
+            string mainCsvPath  = CPH.GetGlobalVar<string>("CsvPath", true) ?? @"D:\Stream\Records\streams.csv";
+            string dashboardPath = mainCsvPath.Replace("streams.csv", "dashboard.html");
+
+            if (File.Exists(dashboardPath))
+            {
+                Process.Start(new ProcessStartInfo(dashboardPath) { UseShellExecute = true });
+                CPH.SetGlobalVar("dashboard_last_opened", today, true);
+                CPH.LogInfo($"[StreamArchiver] Dashboard im Browser geöffnet: {dashboardPath}");
+            }
+            else
+            {
+                CPH.LogInfo($"[StreamArchiver] Dashboard-Datei noch nicht vorhanden ({dashboardPath}) – wird gleich von WriteStatus angelegt.");
+            }
+        }
+        catch (Exception ex)
+        {
+            CPH.LogWarn($"[StreamArchiver] Konnte Dashboard nicht öffnen: {ex.Message}");
         }
     }
 
@@ -283,6 +337,121 @@ public class CPHInline
         }
 
         onProgress?.Invoke(copiedBytes, totalBytes);
+    }
+
+    // Ported aus StreamChecker.cs – läuft direkt im Anschluss ans Archivieren statt
+    // über die Queue als separate Sub-Action. KEIN "StreamArchiver läuft noch"-Hinweis
+    // nötig wie in der eigenständigen Version, weil hier gar kein Race möglich ist:
+    // diese Methode läuft ja selbst innerhalb desselben, noch laufenden Archiver-Aufrufs.
+    private void RunEmbeddedCheck(string recordsRootDir, string csvPath)
+    {
+        CPH.LogInfo("[StreamChecker] ── Check gestartet ──────────────────────");
+        AppendLog("StreamChecker", "🔎 Check gestartet...");
+        WriteStatus("checker", "Überprüfe Archiv...");
+
+        if (!File.Exists(csvPath))
+        {
+            CPH.LogWarn("[StreamChecker] Keine streams.csv gefunden – noch keine Streams archiviert.");
+            return;
+        }
+
+        var lines = File.ReadAllLines(csvPath)
+            .Skip(1)
+            .Where(l => !string.IsNullOrWhiteSpace(l))
+            .Reverse()
+            .Take(15)
+            .Reverse()
+            .ToList();
+
+        if (lines.Count == 0)
+        {
+            CPH.LogWarn("[StreamChecker] CSV ist leer – noch keine Einträge.");
+            return;
+        }
+
+        int total    = 0;
+        int ok       = 0;
+        int missing  = 0;
+        int corrupt  = 0;
+        int noBackup = 0;
+
+        var missingFiles = new List<string>();
+
+        foreach (var line in lines)
+        {
+            var parts = line.Split(',');
+            if (parts.Length < 5) continue;
+
+            string streamNr = parts[0].Trim();
+            string date     = parts[1].Trim();
+            string gameName = parts[2].Trim();
+            string fileName = parts[3].Trim();
+            string status   = parts[4].Trim();
+
+            total++;
+
+            string expectedPath = Path.Combine(recordsRootDir, gameName, fileName);
+            bool fileExists = File.Exists(expectedPath);
+
+            if (status == "KORRUPT_KEIN_BACKUP")
+            {
+                noBackup++;
+                CPH.LogWarn($"[StreamChecker] ⚠️  #{streamNr} [{date}] {fileName} – KORRUPT, kein Backup vorhanden!");
+            }
+            else if (!fileExists)
+            {
+                missing++;
+                missingFiles.Add($"#{streamNr} [{date}] {fileName}");
+                CPH.LogWarn($"[StreamChecker] ❌ #{streamNr} [{date}] {fileName} – DATEI FEHLT! (Erwartet: {expectedPath})");
+            }
+            else if (status == "KORRUPT_VOD_GEZOGEN")
+            {
+                corrupt++;
+                CPH.LogInfo($"[StreamChecker] ⚠️  #{streamNr} [{date}] {fileName} – VOD Backup (war korrupt, Datei OK)");
+            }
+            else
+            {
+                ok++;
+                CPH.LogInfo($"[StreamChecker] ✅ #{streamNr} [{date}] {fileName} – OK");
+            }
+        }
+
+        CPH.LogInfo("[StreamChecker] ── Zusammenfassung ─────────────────────");
+        CPH.LogInfo($"[StreamChecker] Gesamt:      {total}");
+        CPH.LogInfo($"[StreamChecker] OK:          {ok}");
+        CPH.LogInfo($"[StreamChecker] VOD Backup:  {corrupt}");
+        CPH.LogInfo($"[StreamChecker] Fehlend:     {missing}");
+        CPH.LogInfo($"[StreamChecker] Kein Backup: {noBackup}");
+
+        // Checker Ergebnis in Global Variables für Dashboard speichern
+        CPH.SetGlobalVar("checker_total",     total.ToString(),   false);
+        CPH.SetGlobalVar("checker_ok",        ok.ToString(),      false);
+        CPH.SetGlobalVar("checker_missing",   missing.ToString(), false);
+        CPH.SetGlobalVar("checker_nobackup",  noBackup.ToString(),false);
+        CPH.SetGlobalVar("checker_lastcheck", DateTime.UtcNow.ToString("O"), false);
+
+        if (missing > 0 || noBackup > 0)
+        {
+            string summary = $"{missing} fehlend, {noBackup} ohne Backup – Log prüfen!";
+            CPH.LogWarn($"[StreamChecker] ⚠️  Handlungsbedarf! {summary}");
+            foreach (var f in missingFiles)
+                CPH.LogWarn($"[StreamChecker]    → {f}");
+
+            CPH.ShowToastNotification("StreamChecker", "StreamChecker ⚠️", summary, "", "");
+            AppendLog("StreamChecker", $"⚠️ {summary}");
+            foreach (var f in missingFiles)
+                AppendLog("StreamChecker", $"❌ Fehlt: {f}");
+            WriteStatus("idle", summary);
+        }
+        else
+        {
+            CPH.LogInfo("[StreamChecker] ✅ Alle Streams vorhanden!");
+            CPH.ShowToastNotification("StreamChecker", "StreamChecker ✅", $"Alle {total} Streams vorhanden.", "", "");
+            AppendLog("StreamChecker", $"✅ Alle {total} Streams vorhanden.");
+            WriteStatus("idle", $"Alle {total} Streams OK");
+        }
+
+        CPH.LogInfo("[StreamChecker] ── Check abgeschlossen ─────────────────");
     }
 
     private bool CheckFileWithFFmpeg(string filePath, string ffmpegPath)
@@ -548,11 +717,11 @@ public class CPHInline
         string ytSt  = !string.IsNullOrEmpty(ytStatus) ? ytStatus : (CPH.GetGlobalVar<string>("yt_status", false) ?? "–");
         string ytDet = !string.IsNullOrEmpty(ytDetail) ? ytDetail : (CPH.GetGlobalVar<string>("yt_detail", false) ?? "–");
 
-        // Gemeinsames Live-Log aller Scripts (neueste zuerst)
+        // Gemeinsames Live-Log aller Scripts (chronologisch, älteste zuerst)
         string sharedLogRaw = CPH.GetGlobalVar<string>("dashboard_log", true) ?? "";
         var liveLogHtml = new System.Text.StringBuilder();
-        var logLines = sharedLogRaw.Split(new[] { "\n" }, StringSplitOptions.RemoveEmptyEntries)
-            .Reverse().Take(60);
+        var allLogLines = sharedLogRaw.Split(new[] { "\n" }, StringSplitOptions.RemoveEmptyEntries);
+        var logLines = allLogLines.Skip(Math.Max(0, allLogLines.Length - 60));
         foreach (var line in logLines)
         {
             // Format: yyyy-MM-dd|HH:mm:ss|ScriptTag|Nachricht – mit Fallback fürs alte
@@ -561,14 +730,14 @@ public class CPHInline
             if (parts.Length == 4)
             {
                 string pDate = parts[0], pTime = parts[1], pTag = parts[2], pMsg = parts[3];
-                string badgeCls = pTag == "StreamArchiver" ? "badge-archiver"
-                                : pTag == "StreamChecker"  ? "badge-checker"
-                                : pTag == "YTUploader"      ? "badge-uploader"
-                                : "badge-other";
-                liveLogHtml.Append($@"<div class=""livelog-line"">
+                string rowCls = pTag == "StreamArchiver" ? "row-archiver"
+                              : pTag == "StreamChecker"  ? "row-checker"
+                              : pTag == "YTUploader"      ? "row-uploader"
+                              : "row-other";
+                liveLogHtml.Append($@"<div class=""livelog-line {rowCls}"">
                   <span class=""livelog-date"">{System.Net.WebUtility.HtmlEncode(pDate)}</span>
                   <span class=""livelog-time"">{System.Net.WebUtility.HtmlEncode(pTime)}</span>
-                  <span class=""livelog-badge {badgeCls}"">{System.Net.WebUtility.HtmlEncode(pTag)}</span>
+                  <span class=""livelog-badge"">{System.Net.WebUtility.HtmlEncode(pTag)}</span>
                   <span class=""livelog-msg"">{System.Net.WebUtility.HtmlEncode(pMsg)}</span>
                 </div>");
             }
@@ -677,7 +846,7 @@ public class CPHInline
         string css = @"
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#0E0E10;--surface:#18181B;--surface2:#1F1F23;--border:#2A2A2E;--purple:#9147FF;--purple-dim:#6441A4;--green:#1DB954;--red:#E91916;--yellow:#F59E0B;--text:#EFEFF1;--text-dim:#ADADB8;--text-muted:#53535F;--mono:Consolas,'Cascadia Mono','SFMono-Regular',Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-html,body{background:var(--bg);color:var(--text);font-family:var(--sans)}
+html,body{background:radial-gradient(ellipse 1200px 800px at 15% -10%,rgba(145,71,255,.06),transparent),var(--bg);color:var(--text);font-family:var(--sans)}
 body{padding:12px}
 .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
 .header-left{display:flex;align-items:center;gap:14px}
@@ -723,16 +892,21 @@ body{padding:12px}
 .ticker{text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-top:14px}
 .ticker span{color:var(--purple)}
 .livelog-box{max-height:480px;overflow-y:auto;font-family:var(--mono);font-size:11px}
-.livelog-line{display:flex;align-items:baseline;gap:9px;padding:4px 8px;border-radius:6px;line-height:1.6}
+.livelog-line{display:flex;align-items:baseline;gap:9px;padding:5px 10px;border-radius:5px;line-height:1.6;border-left:3px solid var(--border);margin-bottom:1px}
 .livelog-line:hover{background:var(--surface2)}
-.livelog-date{color:var(--text-muted);opacity:.7;white-space:nowrap;font-size:10px}
-.livelog-time{color:var(--text-muted);white-space:nowrap}
-.livelog-badge{flex-shrink:0;padding:2px 8px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.04em;white-space:nowrap}
-.badge-archiver{background:rgba(145,71,255,.16);color:var(--purple)}
-.badge-checker{background:rgba(63,169,245,.16);color:#3FA9F5}
-.badge-uploader{background:rgba(29,185,84,.16);color:var(--green)}
-.badge-other{background:var(--surface2);color:var(--text-muted)}
+.livelog-date{color:var(--text-muted);opacity:.65;white-space:nowrap;font-size:10px}
+.livelog-time{color:var(--text-muted);white-space:nowrap;font-weight:600}
+.livelog-badge{flex-shrink:0;padding:2px 9px;border-radius:20px;font-size:9px;font-weight:700;letter-spacing:.04em;white-space:nowrap;background:var(--surface2);color:var(--text-muted)}
 .livelog-msg{color:var(--text-dim);word-break:break-word;flex:1;min-width:0}
+.row-archiver{border-left-color:var(--purple);background:rgba(145,71,255,.06)}
+.row-archiver .livelog-badge{background:rgba(145,71,255,.22);color:#c4a3ff}
+.row-archiver .livelog-msg{color:#e4d9ff}
+.row-checker{border-left-color:#3FA9F5;background:rgba(63,169,245,.06)}
+.row-checker .livelog-badge{background:rgba(63,169,245,.22);color:#8fcdfb}
+.row-checker .livelog-msg{color:#dbeefe}
+.row-uploader{border-left-color:var(--green);background:rgba(29,185,84,.06)}
+.row-uploader .livelog-badge{background:rgba(29,185,84,.22);color:#7be3a0}
+.row-uploader .livelog-msg{color:#d6f5e1}
 .livelog-hint{color:var(--text-muted);font-weight:400;text-transform:none;letter-spacing:0;font-size:10px}
 ";
         try { File.WriteAllText(cssPath, css); } catch { }
