@@ -11,6 +11,8 @@ public class CPHInline
 {
     public bool Execute()
     {
+        CPH.LogInfo("[StreamArchiver] BUILD-CHECK 2026-07-22-c — falls diese Zeile fehlt, läuft eine alte Version.");
+
         // ── Konfiguration aus Streamer.Bot Global Variables ────────
         string recordBaseDir  = CPH.GetGlobalVar<string>("RecordBaseDir",  true);
         string recordsRootDir = CPH.GetGlobalVar<string>("RecordsRootDir", true);
@@ -110,6 +112,11 @@ public class CPHInline
         string numberedName = $"{nextNumber:D2}_{safeGameName}.mp4";
         string targetPath   = Path.Combine(targetDir, numberedName);
 
+        // Ergebnis wird gesammelt und am Ende in EINEM Toast gezeigt (statt pro
+        // Verzweigung einen eigenen zu feuern – das gab vorher unnötig mehrere Meldungen).
+        string resultIcon = "✅";
+        string resultMsg  = "";
+
         if (fileIsHealthy)
         {
             WriteStatus("copy", $"Kopiere {numberedName}");
@@ -135,7 +142,8 @@ public class CPHInline
 
             CPH.LogInfo($"[StreamArchiver] ✅ Kopie erstellt: {targetPath}");
 
-            CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ✅", $"Stream archiviert: {numberedName}", "", "");
+            resultIcon = "✅";
+            resultMsg  = $"Stream archiviert: {numberedName}";
             WriteCsvEntry(csvPath, nextNumber, safeGameName, numberedName, "OK");
             AppendLog("StreamArchiver", $"✅ Archiviert: {numberedName}");
             WriteStatus("done", $"{numberedName} archiviert");
@@ -143,7 +151,6 @@ public class CPHInline
         else
         {
             CPH.LogWarn($"[StreamArchiver] ❌ Datei korrupt: {latestFile.FullName}");
-            CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ⚠️", "Aufnahme korrupt! Ziehe VOD von Twitch als Fallback...", "", "");
             AppendLog("StreamArchiver", "⚠️ Aufnahme korrupt – lade Twitch VOD als Fallback...");
             WriteStatus("download", "Datei korrupt – lade Twitch VOD");
 
@@ -164,7 +171,8 @@ public class CPHInline
             if (vodDownloaded)
             {
                 CPH.LogInfo($"[StreamArchiver] ✅ Twitch VOD gesichert: {targetPath}");
-                CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ✅", $"Twitch VOD gesichert: {numberedName}", "", "");
+                resultIcon = "✅";
+                resultMsg  = $"Twitch VOD gesichert: {numberedName}";
                 WriteCsvEntry(csvPath, nextNumber, safeGameName, numberedName, "KORRUPT_VOD_GEZOGEN");
                 AppendLog("StreamArchiver", $"✅ VOD-Backup gesichert: {numberedName}");
                 WriteStatus("done", $"VOD Backup: {numberedName}");
@@ -172,7 +180,8 @@ public class CPHInline
             else
             {
                 CPH.LogError("[StreamArchiver] ❌ Twitch VOD Download fehlgeschlagen!");
-                CPH.ShowToastNotification("StreamArchiver", "StreamArchiver ❌", "VOD Download fehlgeschlagen – bitte manuell prüfen!", "", "");
+                resultIcon = "❌";
+                resultMsg  = "VOD Download fehlgeschlagen – bitte manuell prüfen!";
                 WriteCsvEntry(csvPath, nextNumber, safeGameName, numberedName, "KORRUPT_KEIN_BACKUP");
                 AppendLog("StreamArchiver", "❌ VOD-Download fehlgeschlagen – manuelle Prüfung nötig!");
                 WriteStatus("error", "VOD Download fehlgeschlagen");
@@ -184,7 +193,13 @@ public class CPHInline
         // keine Sperr-Datei-Krücke nötig (siehe StreamChecker.cs für den
         // eigenständigen Check über die anderen Trigger: Streamer.Bot Started
         // und !checkstreams).
-        RunEmbeddedCheck(recordsRootDir, csvPath);
+        string checkWarning = RunEmbeddedCheck(recordsRootDir, csvPath);
+
+        // Genau EIN Toast für den ganzen Lauf – Archiv-Ergebnis, plus Check-Warnung
+        // dran, falls vorhanden (überschreibt dann auch das Icon auf ⚠️).
+        string finalIcon = !string.IsNullOrEmpty(checkWarning) ? "⚠️" : resultIcon;
+        string finalMsg  = string.IsNullOrEmpty(checkWarning) ? resultMsg : $"{resultMsg}\n{checkWarning}";
+        CPH.ShowToastNotification("StreamArchiver", $"StreamArchiver {finalIcon}", finalMsg, "", "");
 
         return true;
         }
@@ -232,25 +247,21 @@ public class CPHInline
         }
     }
 
-    // Öffnet das Dashboard einmal pro Kalendertag im Standardbrowser – der Pfad wird
-    // exakt so aus CsvPath abgeleitet wie in WriteStatus, also NICHT hart codiert.
-    // Teilt sich den "dashboard_last_opened"-Merker mit YoutubeUploader/StreamChecker,
-    // damit nicht mehrere Scripts unabhängig voneinander Tabs aufmachen.
+    // Öffnet das Dashboard bei jedem Lauf im Standardbrowser (kein Cooldown mehr –
+    // Process.Start macht dabei aber i.d.R. immer einen neuen Tab auf statt einen
+    // vorhandenen zu fokussieren, also lieber gelegentlich alte Tabs selbst schließen).
+    // Der Pfad wird exakt so aus CsvPath abgeleitet wie in WriteStatus, NICHT hart codiert.
     private void OpenDashboardOnce()
     {
+        CPH.LogInfo("[StreamArchiver] OpenDashboardOnce() wurde aufgerufen.");
         try
         {
-            string today = DateTime.Now.ToString("yyyy-MM-dd");
-            string lastOpened = CPH.GetGlobalVar<string>("dashboard_last_opened", true);
-            if (lastOpened == today) return;
-
             string mainCsvPath  = CPH.GetGlobalVar<string>("CsvPath", true) ?? @"D:\Stream\Records\streams.csv";
             string dashboardPath = mainCsvPath.Replace("streams.csv", "dashboard.html");
 
             if (File.Exists(dashboardPath))
             {
                 Process.Start(new ProcessStartInfo(dashboardPath) { UseShellExecute = true });
-                CPH.SetGlobalVar("dashboard_last_opened", today, true);
                 CPH.LogInfo($"[StreamArchiver] Dashboard im Browser geöffnet: {dashboardPath}");
             }
             else
@@ -340,10 +351,10 @@ public class CPHInline
     }
 
     // Ported aus StreamChecker.cs – läuft direkt im Anschluss ans Archivieren statt
-    // über die Queue als separate Sub-Action. KEIN "StreamArchiver läuft noch"-Hinweis
-    // nötig wie in der eigenständigen Version, weil hier gar kein Race möglich ist:
-    // diese Methode läuft ja selbst innerhalb desselben, noch laufenden Archiver-Aufrufs.
-    private void RunEmbeddedCheck(string recordsRootDir, string csvPath)
+    // über die Queue als separate Sub-Action. Feuert bewusst KEINEN eigenen Toast
+    // (das hat vorher zu zwei Meldungen pro Lauf geführt) – der Aufrufer entscheidet,
+    // ob/wie das Ergebnis mit in den Archiv-Toast einfließt.
+    private string RunEmbeddedCheck(string recordsRootDir, string csvPath)
     {
         CPH.LogInfo("[StreamChecker] ── Check gestartet ──────────────────────");
         AppendLog("StreamChecker", "🔎 Check gestartet...");
@@ -352,7 +363,7 @@ public class CPHInline
         if (!File.Exists(csvPath))
         {
             CPH.LogWarn("[StreamChecker] Keine streams.csv gefunden – noch keine Streams archiviert.");
-            return;
+            return null;
         }
 
         var lines = File.ReadAllLines(csvPath)
@@ -366,7 +377,7 @@ public class CPHInline
         if (lines.Count == 0)
         {
             CPH.LogWarn("[StreamChecker] CSV ist leer – noch keine Einträge.");
-            return;
+            return null;
         }
 
         int total    = 0;
@@ -375,7 +386,8 @@ public class CPHInline
         int corrupt  = 0;
         int noBackup = 0;
 
-        var missingFiles = new List<string>();
+        var missingFiles = new List<string>();  // ausführlich, fürs Log
+        var problemShort = new List<string>();  // kurz, für Toast + Dashboard-Summary
 
         foreach (var line in lines)
         {
@@ -396,12 +408,14 @@ public class CPHInline
             if (status == "KORRUPT_KEIN_BACKUP")
             {
                 noBackup++;
+                problemShort.Add($"#{streamNr} {fileName} (kein Backup)");
                 CPH.LogWarn($"[StreamChecker] ⚠️  #{streamNr} [{date}] {fileName} – KORRUPT, kein Backup vorhanden!");
             }
             else if (!fileExists)
             {
                 missing++;
                 missingFiles.Add($"#{streamNr} [{date}] {fileName}");
+                problemShort.Add($"#{streamNr} {fileName} (fehlt)");
                 CPH.LogWarn($"[StreamChecker] ❌ #{streamNr} [{date}] {fileName} – DATEI FEHLT! (Erwartet: {expectedPath})");
             }
             else if (status == "KORRUPT_VOD_GEZOGEN")
@@ -432,26 +446,29 @@ public class CPHInline
 
         if (missing > 0 || noBackup > 0)
         {
-            string summary = $"{missing} fehlend, {noBackup} ohne Backup – Log prüfen!";
+            string fileList = string.Join(", ", problemShort.Take(3));
+            if (problemShort.Count > 3)
+                fileList += $" +{problemShort.Count - 3} weitere";
+            string summary = $"{missing} fehlend, {noBackup} ohne Backup: {fileList}";
+
             CPH.LogWarn($"[StreamChecker] ⚠️  Handlungsbedarf! {summary}");
             foreach (var f in missingFiles)
                 CPH.LogWarn($"[StreamChecker]    → {f}");
 
-            CPH.ShowToastNotification("StreamChecker", "StreamChecker ⚠️", summary, "", "");
             AppendLog("StreamChecker", $"⚠️ {summary}");
             foreach (var f in missingFiles)
                 AppendLog("StreamChecker", $"❌ Fehlt: {f}");
             WriteStatus("idle", summary);
-        }
-        else
-        {
-            CPH.LogInfo("[StreamChecker] ✅ Alle Streams vorhanden!");
-            CPH.ShowToastNotification("StreamChecker", "StreamChecker ✅", $"Alle {total} Streams vorhanden.", "", "");
-            AppendLog("StreamChecker", $"✅ Alle {total} Streams vorhanden.");
-            WriteStatus("idle", $"Alle {total} Streams OK");
+
+            CPH.LogInfo("[StreamChecker] ── Check abgeschlossen ─────────────────");
+            return summary;
         }
 
+        CPH.LogInfo("[StreamChecker] ✅ Alle Streams vorhanden!");
+        AppendLog("StreamChecker", $"✅ Alle {total} Streams vorhanden.");
+        WriteStatus("idle", $"Alle {total} Streams OK");
         CPH.LogInfo("[StreamChecker] ── Check abgeschlossen ─────────────────");
+        return null;
     }
 
     private bool CheckFileWithFFmpeg(string filePath, string ffmpegPath)
@@ -718,7 +735,7 @@ public class CPHInline
         string ytDet = !string.IsNullOrEmpty(ytDetail) ? ytDetail : (CPH.GetGlobalVar<string>("yt_detail", false) ?? "–");
 
         // Gemeinsames Live-Log aller Scripts (chronologisch, älteste zuerst)
-        string sharedLogRaw = CPH.GetGlobalVar<string>("dashboard_log", true) ?? "";
+        string sharedLogRaw = CPH.GetGlobalVar<string>("dashboard_log", false) ?? "";
         var liveLogHtml = new System.Text.StringBuilder();
         var allLogLines = sharedLogRaw.Split(new[] { "\n" }, StringSplitOptions.RemoveEmptyEntries);
         var logLines = allLogLines.Skip(Math.Max(0, allLogLines.Length - 60));
@@ -743,7 +760,33 @@ public class CPHInline
             }
             else
             {
-                liveLogHtml.Append($"<div class=\"livelog-line\"><span class=\"livelog-msg\">{System.Net.WebUtility.HtmlEncode(line)}</span></div>");
+                // Altes Format ohne Pipes (z.B. "HH:mm:ss [Script] Nachricht") – Script-Tag
+                // trotzdem per Klammer-Suche erkennen, damit auch alte Zeilen farbig bleiben.
+                var legacyMatch = Regex.Match(line, @"^(\d{2}:\d{2}:\d{2})\s*\[([^\]]+)\]\s*(.*)$");
+                string lDate = "–", lTime = line, lTag = "", lMsg = line;
+                if (legacyMatch.Success)
+                {
+                    lTime = legacyMatch.Groups[1].Value;
+                    lTag  = legacyMatch.Groups[2].Value;
+                    lMsg  = legacyMatch.Groups[3].Value;
+                }
+                string legacyRowCls = lTag == "StreamArchiver" ? "row-archiver"
+                                    : lTag == "StreamChecker"  ? "row-checker"
+                                    : lTag == "YTUploader"      ? "row-uploader"
+                                    : "row-other";
+                if (legacyMatch.Success)
+                {
+                    liveLogHtml.Append($@"<div class=""livelog-line {legacyRowCls}"">
+                      <span class=""livelog-date"">{System.Net.WebUtility.HtmlEncode(lDate)}</span>
+                      <span class=""livelog-time"">{System.Net.WebUtility.HtmlEncode(lTime)}</span>
+                      <span class=""livelog-badge"">{System.Net.WebUtility.HtmlEncode(lTag)}</span>
+                      <span class=""livelog-msg"">{System.Net.WebUtility.HtmlEncode(lMsg)}</span>
+                    </div>");
+                }
+                else
+                {
+                    liveLogHtml.Append($"<div class=\"livelog-line\"><span class=\"livelog-msg\">{System.Net.WebUtility.HtmlEncode(line)}</span></div>");
+                }
             }
         }
         if (liveLogHtml.Length == 0)
@@ -820,9 +863,14 @@ public class CPHInline
 
         // Checker time
         string checkerAgo = "–";
-        if (!string.IsNullOrEmpty(cTime) && DateTime.TryParse(cTime, out DateTime ct))
+        // RoundtripKind ist Pflicht hier: ohne das interpretiert TryParse das "Z" am
+        // Ende zwar korrekt, wandelt den Wert aber in lokale Zeit um (Kind=Local) –
+        // die anschliessende Subtraktion von DateTime.UtcNow vergleicht dann UTC mit
+        // Lokalzeit und liefert je nach Zeitzone einen falschen (z.T. negativen) Wert.
+        if (!string.IsNullOrEmpty(cTime) &&
+            DateTime.TryParse(cTime, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime ct))
         {
-            int diff = (int)(DateTime.UtcNow - ct).TotalSeconds;
+            int diff = Math.Max(0, (int)(DateTime.UtcNow - ct).TotalSeconds);
             checkerAgo = diff < 60 ? $"vor {diff}s" : diff < 3600 ? $"vor {diff/60}min" : $"vor {diff/3600}h";
         }
 
@@ -892,7 +940,8 @@ body{padding:12px}
 .ticker{text-align:center;font-family:var(--mono);font-size:10px;color:var(--text-muted);margin-top:14px}
 .ticker span{color:var(--purple)}
 .livelog-box{max-height:480px;overflow-y:auto;font-family:var(--mono);font-size:11px}
-.livelog-line{display:flex;align-items:baseline;gap:9px;padding:5px 10px;border-radius:5px;line-height:1.6;border-left:3px solid var(--border);margin-bottom:1px}
+.livelog-line{display:flex;align-items:baseline;gap:9px;padding:6px 10px;line-height:1.6;border-left:3px solid var(--border);border-bottom:1px solid rgba(255,255,255,.04)}
+.livelog-line:last-child{border-bottom:none}
 .livelog-line:hover{background:var(--surface2)}
 .livelog-date{color:var(--text-muted);opacity:.65;white-space:nowrap;font-size:10px}
 .livelog-time{color:var(--text-muted);white-space:nowrap;font-weight:600}
@@ -995,7 +1044,9 @@ body{padding:12px}
 <html lang=""de"">
 <head>
 <meta charset=""UTF-8"">
-<meta http-equiv=""Cache-Control"" content=""no-cache"">
+<meta http-equiv=""Cache-Control"" content=""no-cache, no-store, must-revalidate"">
+<meta http-equiv=""Pragma"" content=""no-cache"">
+<meta http-equiv=""Expires"" content=""0"">
 <link rel=""stylesheet"" href=""dashboard.css?v={cacheBust}"">
 </head>
 <body>
@@ -1010,15 +1061,22 @@ body{padding:12px}
     var sel = window.getSelection();
     return !!(sel && sel.toString().length > 0);
   }}
+  function reloadFresh(){{
+    // Cache-Buster in der URL erzwingt eine ECHTE Neuanfrage der Datei von der
+    // Platte statt einer evtl. gecachten Kopie – reines location.reload() hat
+    // das nicht zuverlässig genug getan.
+    var base = location.pathname.split('?')[0];
+    location.href = base + '?t=' + Date.now();
+  }}
   function tick(){{
     if (hasSelection()) {{
       if (stateEl) stateEl.textContent = '⏸ pausiert (Auswahl aktiv)';
       setTimeout(tick, 400);
     }} else {{
-      location.reload();
+      reloadFresh();
     }}
   }}
-  setTimeout(tick, 2500);
+  setTimeout(tick, 2000);
 }})();
 </script>
 </body>
@@ -1046,10 +1104,10 @@ iframe{{border:0;width:100%;display:block;background:transparent}}
 </style>
 </head>
 <body>
-<iframe class=""f-step"" src=""dashboard-step.html""></iframe>
+<iframe class=""f-step"" src=""dashboard-step.html?t={cacheBust}""></iframe>
 <div class=""row"">
-  <iframe class=""f-stats"" src=""dashboard-stats.html""></iframe>
-  <iframe class=""f-log"" src=""dashboard-log.html""></iframe>
+  <iframe class=""f-stats"" src=""dashboard-stats.html?t={cacheBust}""></iframe>
+  <iframe class=""f-log"" src=""dashboard-log.html?t={cacheBust}""></iframe>
 </div>
 <div class=""hint"">Schritt &amp; Statistik aktualisieren sich alle 3s · Live-Log pausiert automatisch während Textauswahl</div>
 </body>
